@@ -1,0 +1,20 @@
+services:
+  jwt-exchange:
+    image: ghcr.io/nnet-dev/jwt-exchange:main
+    container_name: jwt-exchange
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - INBOUND_ISSUER_URI=https://your-tenant.okta.com
+      - RSA_KEY_PATH=/keys
+      - QLIK_AUDIENCE=your-service-audience
+      - DB_PATH=/data/audit.db
+      - RUST_LOG=info
+    volumes:
+      - ./data:/data
+      - jwt-keys:/keys
+      - ./.env:/app/.env:ro
+
+volumes:
+  jwt-keys:

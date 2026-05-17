@@ -1,0 +1,130 @@
+# =============================================================================
+# .gitignore - starter for projects bootstrapped from the NNet foundation.
+#
+# This file is copied once at project init and is NOT synced on subsequent
+# foundation updates — it's project-owned. Trim sections that don't apply to
+# your project's language stack, and add project-specific entries below.
+# =============================================================================
+
+# ---- Build outputs (generic) ------------------------------------------------
+build/
+dist/
+out/
+target/
+*.tmp
+
+# ---- Logs -------------------------------------------------------------------
+*.log
+logs/
+
+# ---- Environment / secrets --------------------------------------------------
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+secrets/
+
+# ---- Coverage / profiling ---------------------------------------------------
+coverage/
+*.lcov
+.nyc_output/
+
+# ---- Rust -------------------------------------------------------------------
+# `target/` is covered above. Keep Cargo.lock for binaries (reproducible
+# builds); libraries may choose to ignore it (uncomment the next line).
+# Cargo.lock
+**/*.rs.bk
+
+# ---- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.eggs/
+.venv/
+venv/
+env/
+.python-version
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.pytype/
+.tox/
+.nox/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+
+# ---- .NET / C# --------------------------------------------------------------
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+[Bb]uildLog.*
+*.user
+*.userosscache
+*.sln.docstates
+*.suo
+*.userprefs
+.vs/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+*.pidb
+*.svclog
+*.scc
+*.nupkg
+*.snupkg
+.dotnet/
+
+# ---- PowerShell -------------------------------------------------------------
+*.psproj.user
+PSScriptAnalyzerResults.xml
+psdeploy/
+*.psc1
+
+# ---- Node (for tooling/scripts only — full Node projects should extend) ----
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ---- Editors / IDEs ---------------------------------------------------------
+.vscode/
+!.vscode/settings.json.example
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.history/
+
+# ---- OS ---------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ---- Foundation tooling / local state --------------------------------------
+# `.foundation` (version pin) IS committed. Anything else local goes here.
+.foundation.bak
+
+# ---- Project-specific (add entries below this line) -------------------------
+
+# SQLite database (local state, not committed)
+*.db
+*.db-shm
+*.db-wal
+
+# Added by cargo
+
+/target

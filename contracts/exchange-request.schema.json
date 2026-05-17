@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Exchange Request",
+  "description": "Request body for POST /exchange. The token may also be supplied via Authorization: Bearer header instead of the body.",
+  "type": "object",
+  "properties": {
+    "token": {
+      "type": "string",
+      "description": "The incoming IdP JWT to validate and exchange.",
+      "minLength": 1
+    },
+    "groups": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Requested group memberships for the downstream JWT."
+    }
+  },
+  "additionalProperties": false
+}

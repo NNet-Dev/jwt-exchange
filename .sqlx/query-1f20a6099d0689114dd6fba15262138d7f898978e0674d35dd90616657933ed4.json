@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO used_jti (jti, has_groups, exp) VALUES (?1, ?2, ?3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "1f20a6099d0689114dd6fba15262138d7f898978e0674d35dd90616657933ed4"
+}

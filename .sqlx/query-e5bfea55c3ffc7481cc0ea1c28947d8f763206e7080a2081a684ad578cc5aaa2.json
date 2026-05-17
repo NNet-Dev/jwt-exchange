@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO used_jti (jti, has_groups, exp) VALUES (?1, ?2, ?3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "e5bfea55c3ffc7481cc0ea1c28947d8f763206e7080a2081a684ad578cc5aaa2"
+}

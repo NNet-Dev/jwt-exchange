@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/agent-outcome.schema.json",
+  "title": "AGENT_OUTCOME envelope",
+  "description": "The structured envelope a factory-produced or hand-authored agent emits as the terminal output of every invocation. Captures only what the agent uniquely knows (status, self-verification result, failure mode, agent-specific assessment, artifact pointers, routing hints). Objective measurements (tokens, latency, cost, model identity) are emitted by the runtime adapter, not the agent. Per AGENT_INSTRUCTIONS.md and AGENTIC_PRINCIPLES.md (telemetry is a system property, not an agent property).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "status",
+    "selfVerification"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "description": "Major.minor version of the AGENT_OUTCOME envelope schema. Adapter parsing is forward-compatible across minor bumps within the same major; major bumps may require adapter version range updates per the version-compatibility matrix in design-shared-002-runtime-adapter.md.",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "examples": ["1.0", "1.1"]
+    },
+    "status": {
+      "description": "Terminal status the agent reports for its own work. Mirrors the status field on InvocationResult produced by the runtime adapter. The adapter records this verbatim onto the invocations row.",
+      "enum": [
+        "completed",
+        "partial",
+        "failed",
+        "refused",
+        "timeout",
+        "cancelled",
+        "aborted"
+      ]
+    },
+    "selfVerification": {
+      "description": "Outcome of the agent's own self-verification step (per AGENT_INSTRUCTIONS.md: Run your self-verification before emitting). passed indicates the check ran and succeeded; failed indicates it ran and surfaced an issue (typically paired with status: failed); skipped indicates the agent's contract did not declare a self-verification step.",
+      "enum": ["passed", "failed", "skipped"]
+    },
+    "failureMode": {
+      "description": "Enumerated failure-mode identifier when status is not completed. The set of legal failure modes is per-agent and declared in the agent's prompt contract; this schema does not enumerate them centrally. Common values: budget_exceeded, tool_unavailable, guardrail_violation, input_invalid, dependency_missing, internal_error. Null on completed/partial.",
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "agentAssessment": {
+      "description": "Agent-specific structured self-report. Shape varies by role; the per-agent prompt declares the schema for this field. Examples: a critic emits {verdict, findings, confidence}; a builder emits {modulesProduced, linesWritten, testsAuthored, confidence}; an intake agent emits {requirementsCount, ambiguitiesIdentified, blockers}. Free-form object validated by per-agent contracts (not by this universal schema).",
+      "type": ["object", "null"]
+    },
+    "producedArtifacts": {
+      "description": "Pointers (URIs, not contents) to artifacts the agent produced during this invocation. Empty array if no artifacts were produced. Each entry identifies one artifact with a stable kind, a URI for retrieval, and optional content hash for integrity checks.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/ArtifactRef" },
+      "default": []
+    },
+    "routingHints": {
+      "description": "Advisory next-step suggestions the agent surfaces for the orchestrator. Hints are strictly advisory; the orchestrator may ignore them. Common kinds: retry_self (try this same agent again with adjusted input), escalate_hitl (a human should review), route_to (a different capability is better suited), proceed (results are good enough to advance).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/RoutingHint" },
+      "default": []
+    },
+    "metadata": {
+      "description": "Forward-compatibility bucket. Unknown fields encountered by older adapter versions are preserved here so they survive round-trips. New optional fields the schema introduces in future minor versions land here until the schema is bumped to acknowledge them as first-class.",
+      "type": "object",
+      "additionalProperties": true,
+      "default": {}
+    }
+  },
+  "$defs": {
+    "ArtifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "uri"],
+      "properties": {
+        "kind": {
+          "description": "Categorisation of the artifact (e.g., code-module, test-suite, design-doc, intake-document, critic-report, flow-definition). Open vocabulary; per-agent contracts may pin specific kinds.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "uri": {
+          "description": "Reference to the artifact's location. Typically a file URI relative to the build directory (file://./src/module.py), an HTTP URL, or a registry reference (registry://knowledge/kv_xyz).",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "contentHash": {
+          "description": "Optional SHA256 hex digest of the artifact's content. Used by downstream consumers to detect changes between invocations.",
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "description": {
+          "description": "Optional one-line human-readable summary of what the artifact contains.",
+          "type": ["string", "null"],
+          "maxLength": 500
+        }
+      }
+    },
+    "RoutingHint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "priority", "rationale"],
+      "properties": {
+        "kind": {
+          "enum": ["retry_self", "escalate_hitl", "route_to", "proceed", "abort"]
+        },
+        "priority": {
+          "description": "How strongly the agent recommends this hint. low is informational; medium is the agent's best guess; high indicates the agent strongly believes the hint should be honored. The orchestrator may still override.",
+          "enum": ["low", "medium", "high"]
+        },
+        "rationale": {
+          "description": "Short human-readable reason for the hint. Surfaced to the orchestrator for decision logging and to operators via the dashboard.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "targetCapabilityKey": {
+          "description": "Required when kind is route_to. The capability key the agent suggests routing the work to (e.g., role:python-domain-expert).",
+          "type": ["string", "null"],
+          "pattern": "^role:[a-z][a-z0-9-]*$"
+        }
+      }
+    }
+  }
+}
