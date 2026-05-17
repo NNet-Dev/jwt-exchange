@@ -14,15 +14,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Product-agnostic environment variable names**: `OKTA_ISSUER_URI` → `INBOUND_ISSUER_URI`, `OKTA_AUDIENCE_VALIDATION` → `INBOUND_AUDIENCE_VALIDATION`, `OKTA_EXPECTED_AUDIENCE` → `INBOUND_EXPECTED_AUDIENCE`. The `OktaUnavailable` error type and `okta_unavailable` error code are now `IdPUnavailable` / `idp_unavailable`. All references to "Okta" in error messages, log output, and documentation have been replaced with generic "IdP" or "inbound" terminology.
 
-## [1.0.1] — 2026-05-18
+## [1.0.1] — 2026-05-21
 
 ### Fixed
 
-- **SQLite WAL mode startup failure**: `?journal_mode=WAL` is not a valid sqlx connection URL parameter. WAL mode is now enabled via `PRAGMA journal_mode=WAL` executed after the pool connects. Fixes container startup error: `unknown query parameter 'journal_mode' while parsing connection URL`.
+- **Replay detection now records inbound claims**: Previously, replay-detected audit logs showed `null` for `inbound_sub`, `inbound_iss`, `inbound_aud`, and `token_jti`. The `ReplayDetected` error variant now carries the extracted claims from the validated token so the audit log shows exactly *which* user and token is being replayed.
+- **Validation field corrected for replays**: Audit records for replayed tokens previously showed `"validation": "token has already been used..."`. Since the replay check runs *after* successful signature/issuer/expiry validation, the validation field now correctly shows `"success"` — the token itself was valid, it was just already consumed. The error details remain in `error_detail`.
 
 ### Changed
 
-- **WAL mode applied post-connection**: `PRAGMA journal_mode=WAL` runs as a query against the connected pool instead of being embedded in the connection string.
+- `ServiceError::ReplayDetected` now carries `inbound_sub`, `inbound_iss`, `inbound_aud`, and `replay_id` fields instead of being a unit variant.
 
 ## [1.0.0] — 2026-05-17
 
