@@ -32,7 +32,12 @@ pub enum ServiceError {
     UnknownKid,
 
     #[error("token has already been used (replay detected)")]
-    ReplayDetected,
+    ReplayDetected {
+        inbound_sub: String,
+        inbound_iss: Option<String>,
+        inbound_aud: Option<String>,
+        replay_id: String,
+    },
 
     #[error("failed to fetch IdP configuration or JWKS")]
     IdPUnavailable,
@@ -87,7 +92,7 @@ impl ServiceError {
             Self::InvalidIssuer => "invalid_issuer",
             Self::InvalidAudience => "invalid_audience",
             Self::UnknownKid => "unknown_kid",
-            Self::ReplayDetected => "replay_detected",
+            Self::ReplayDetected { .. } => "replay_detected",
             Self::IdPUnavailable => "idp_unavailable",
             Self::CertNotLoaded => "cert_not_loaded",
             Self::InternalError => "internal_error",
@@ -137,7 +142,7 @@ impl actix_web::ResponseError for ServiceError {
             | Self::InvalidIssuer
             | Self::InvalidAudience
             | Self::UnknownKid
-            | Self::ReplayDetected => StatusCode::UNAUTHORIZED,
+            | Self::ReplayDetected { .. } => StatusCode::UNAUTHORIZED,
             Self::IdPUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::CertNotLoaded => StatusCode::INTERNAL_SERVER_ERROR,
             Self::InternalError

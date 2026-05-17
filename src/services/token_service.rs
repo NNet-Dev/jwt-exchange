@@ -185,8 +185,24 @@ pub async fn exchange_token(
     .await
     .map_err(|e| ServiceError::Other(e.into()))?;
     if already_used {
+        let inbound_aud = claims
+            .aud
+            .as_ref()
+            .and_then(|v| v.as_str().map(String::from))
+            .or_else(|| {
+                claims.aud.as_ref().and_then(|v| {
+                    v.as_array()
+                        .and_then(|a| a.first())
+                        .and_then(|v| v.as_str().map(String::from))
+                })
+            });
         warn!(replay_id, inbound_sub, "Replay attack detected");
-        return Err(ServiceError::ReplayDetected);
+        return Err(ServiceError::ReplayDetected {
+            inbound_sub,
+            inbound_iss: claims.iss.clone(),
+            inbound_aud,
+            replay_id,
+        });
     }
 
     // Step 6: Build Qlik claims

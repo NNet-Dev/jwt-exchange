@@ -46,7 +46,7 @@ pub async fn exchange(
     let elapsed_ms = start.elapsed().as_millis() as i64;
 
     // Extract audit fields from result
-    let (inbound_sub, inbound_iss, inbound_aud, outbound_sub, token_jti, code, err) = match &result {
+    let (inbound_sub, inbound_iss, inbound_aud, outbound_sub, token_jti, code, err, validation) = match &result {
         Ok(r) => (
             Some(r.inbound_sub.clone()),
             r.inbound_iss.clone(),
@@ -55,6 +55,17 @@ pub async fn exchange(
             Some(r.token_hash.clone()),
             200i64,
             None,
+            "success",
+        ),
+        Err(ServiceError::ReplayDetected { inbound_sub, inbound_iss, inbound_aud, replay_id }) => (
+            Some(inbound_sub.clone()),
+            inbound_iss.clone(),
+            inbound_aud.clone(),
+            None,
+            Some(replay_id.clone()),
+            401i64,
+            Some("token has already been used (replay detected)".to_string()),
+            "success", // Token itself was valid — replay is a post-validation check
         ),
         Err(e) => (
             None,
@@ -64,12 +75,13 @@ pub async fn exchange(
             None,
             e.status_code().as_u16() as i64,
             Some(format!("{e}")),
+            "",
         ),
     };
-    let validation = if code < 400 {
-        "success"
-    } else {
+    let validation = if validation.is_empty() {
         err.as_deref().unwrap_or("")
+    } else {
+        validation
     };
 
     audit_service::log_exchange_attempt(
