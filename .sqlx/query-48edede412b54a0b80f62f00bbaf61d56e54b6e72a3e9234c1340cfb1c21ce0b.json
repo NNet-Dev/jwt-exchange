@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM request_log WHERE timestamp < datetime('now', '-' || ?1 || ' days')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "48edede412b54a0b80f62f00bbaf61d56e54b6e72a3e9234c1340cfb1c21ce0b"
+}

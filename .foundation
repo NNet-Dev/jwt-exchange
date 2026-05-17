@@ -1,0 +1,21 @@
+{
+  "project": {
+    "profile": "standard",
+    "version": "0.5.1",
+    "appliedAt": "2026-05-17T10:14:00Z",
+    "languages": ["rust"]
+  },
+  "sync": {
+    "upstreams": [
+      {
+        "name": "foundation",
+        "url": "https://github.com/NNet-Dev/foundation",
+        "version": "0.5.1",
+        "type": "foundation"
+      }
+    ]
+  },
+  "repo": {
+    "url": "https://github.com/NNet-Dev/foundation"
+  }
+}

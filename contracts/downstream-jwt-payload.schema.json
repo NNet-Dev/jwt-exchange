@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Downstream JWT Payload",
+  "description": "The claims structure of the minted JWT returned by POST /exchange. This is the payload that the downstream service (e.g. Qlik Sense JWT virtual proxy) will validate.",
+  "type": "object",
+  "required": ["userid", "iss", "aud", "exp", "nbf", "iat", "jti"],
+  "properties": {
+    "userid": {
+      "type": "string",
+      "description": "Mapped from the incoming JWT's sub claim. Identifies the user to the downstream service."
+    },
+    "userdirectory": {
+      "type": "string",
+      "description": "Downstream user directory name. Only present when configured server-side."
+    },
+    "name": {
+      "type": "string",
+      "description": "Carried from the incoming JWT's name claim if present."
+    },
+    "email": {
+      "type": "string",
+      "format": "email",
+      "description": "Carried from the incoming JWT's email claim if present."
+    },
+    "groups": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Filtered group memberships — only groups present in the server-side whitelist."
+    },
+    "iss": {
+      "type": "string",
+      "const": "jwt-exchange",
+      "description": "Issuer identifier of this service."
+    },
+    "aud": {
+      "type": "string",
+      "description": "Audience — must match the downstream service's expected audience."
+    },
+    "exp": {
+      "type": "integer",
+      "description": "Expiry time as Unix timestamp. Capped at the incoming JWT's exp."
+    },
+    "nbf": {
+      "type": "integer",
+      "description": "Not-before time as Unix timestamp."
+    },
+    "iat": {
+      "type": "integer",
+      "description": "Issued-at time as Unix timestamp."
+    },
+    "jti": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique token identifier (UUID v4)."
+    }
+  },
+  "additionalProperties": false
+}

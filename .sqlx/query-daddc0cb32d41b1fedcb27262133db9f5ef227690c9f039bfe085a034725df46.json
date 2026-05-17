@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM used_jti WHERE exp < ?1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "daddc0cb32d41b1fedcb27262133db9f5ef227690c9f039bfe085a034725df46"
+}

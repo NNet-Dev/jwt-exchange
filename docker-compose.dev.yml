@@ -1,0 +1,11 @@
+# Development override — builds from local source instead of pulling a pre-built image.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+
+services:
+  jwt-exchange:
+    image: ghcr.io/nnet-dev/jwt-exchange:dev
+    build:
+      context: .
+      dockerfile: Dockerfile

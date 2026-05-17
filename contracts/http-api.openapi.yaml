@@ -1,0 +1,331 @@
+openapi: "3.1.0"
+info:
+  title: JWT Exchange API
+  description: >
+    Token exchange service. Validates incoming IdP-issued JWTs and mints
+    new RSA-signed JWTs tailored for a downstream service (e.g. Qlik Sense
+    JWT virtual proxy).
+  version: "1.0.0"
+  contact:
+    name: Marc
+servers:
+  - url: "http://localhost:8080"
+    description: Local development
+
+paths:
+  /api/v1/exchange:
+    post:
+      summary: Exchange an IdP JWT for a downstream JWT
+      description: >
+        Validates the incoming JWT against the IdP JWKS, extracts user
+        identity and claims, and returns a new RSA-signed JWT. The
+        incoming token can be provided either in the Authorization header
+        (Bearer) or in the request body. The header takes precedence.
+
+        Each token's JTI (JWT ID) is recorded to prevent replay — the same
+        inbound token can only be exchanged once.
+      operationId: exchangeToken
+      parameters:
+        - name: Authorization
+          in: header
+          required: false
+          schema:
+            type: string
+          description: >
+            Bearer token containing the incoming IdP JWT. If present,
+            overrides any `token` in the request body.
+          example: "Bearer eyJhbG..."
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExchangeRequest"
+      responses:
+        "200":
+          description: Token exchanged successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExchangeResponse"
+              examples:
+                success:
+                  value:
+                    accessToken: "eyJhbG..."
+                    tokenType: "Bearer"
+                    expiresIn: 3600
+                    issuedAt: "2026-05-17T12:00:00Z"
+        "400":
+          description: Bad request — missing or malformed token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              examples:
+                missingToken:
+                  value:
+                    error: "missing_token"
+                    message: "no token provided in request body or Authorization header"
+                    requestId: "550e8400-e29b-41d4-a716-446655440000"
+                    timestamp: "2026-05-17T12:00:00Z"
+                malformedToken:
+                  value:
+                    error: "malformed_token"
+                    message: "token is not a valid JWT structure"
+                    requestId: "550e8400-e29b-41d4-a716-446655440000"
+                    timestamp: "2026-05-17T12:00:00Z"
+        "401":
+          description: Token validation failed — invalid signature, expired, wrong issuer, unknown KID, or replay detected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              examples:
+                invalidSignature:
+                  value:
+                    error: "invalid_signature"
+                    message: "JWT signature verification failed"
+                    detail: "signature did not match any JWKS key"
+                    requestId: "550e8400-e29b-41d4-a716-446655440000"
+                    timestamp: "2026-05-17T12:00:00Z"
+                expiredToken:
+                  value:
+                    error: "expired_token"
+                    message: "JWT has expired"
+                    detail: "token exp claim is in the past"
+                    requestId: "550e8400-e29b-41d4-a716-446655440000"
+                    timestamp: "2026-05-17T12:00:00Z"
+                unknownKid:
+                  value:
+                    error: "unknown_kid"
+                    message: "key ID not found in JWKS"
+                    detail: "key ID not found in JWKS after refresh"
+                    requestId: "550e8400-e29b-41d4-a716-446655440000"
+                    timestamp: "2026-05-17T12:00:00Z"
+                replayDetected:
+                  value:
+                    error: "replay_detected"
+                    message: "token has already been used (replay detected)"
+                    requestId: "550e8400-e29b-41d4-a716-446655440000"
+                    timestamp: "2026-05-17T12:00:00Z"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              examples:
+                internalError:
+                  value:
+                    error: "internal_error"
+                    message: "internal server error"
+                    requestId: "550e8400-e29b-41d4-a716-446655440000"
+                    timestamp: "2026-05-17T12:00:00Z"
+        "503":
+          description: IdP unavailable — JWKS fetch failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              examples:
+                idpUnavailable:
+                  value:
+                    error: "idp_unavailable"
+                    message: "failed to fetch IdP configuration or JWKS"
+                    requestId: "550e8400-e29b-41d4-a716-446655440000"
+                    timestamp: "2026-05-17T12:00:00Z"
+
+  /api/v1/cert:
+    get:
+      summary: Return the public X.509 certificate
+      description: >
+        Returns the PEM-formatted public certificate for the RSA key pair
+        used to sign minted JWTs. Import this into the downstream
+        service's trust store.
+      operationId: getCertificate
+      responses:
+        "200":
+          description: PEM certificate
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: |
+                  -----BEGIN CERTIFICATE-----
+                  MIICpDCCAYwCCQDU+pQ4P8fGhTANBgkqhkiG9w0BAQsFADAUMRIwEAYDVQQDDAls...
+                  -----END CERTIFICATE-----
+        "500":
+          description: Certificate not loaded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+  /api/v1/health:
+    get:
+      summary: Health and readiness probe
+      description: >
+        Returns the health status of the service, including JWKS cache,
+        signing key, and database connectivity.
+      operationId: healthCheck
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          description: Service is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+components:
+  schemas:
+    ExchangeRequest:
+      type: object
+      properties:
+        token:
+          type: string
+          description: >
+            The incoming IdP JWT. Required if not provided via
+            Authorization: Bearer header.
+          example: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM..."
+        groups:
+          type: array
+          items:
+            type: string
+          description: >
+            Requested group memberships. Only groups present in the
+            server-side whitelist will be included in the minted JWT.
+          example: ["admins", "analysts"]
+      additionalProperties: false
+
+    ExchangeResponse:
+      type: object
+      required:
+        - accessToken
+        - tokenType
+        - expiresIn
+        - issuedAt
+      properties:
+        accessToken:
+          type: string
+          description: The minted RSA-signed JWT for the downstream service.
+          example: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyaWQiOiIxMjM..."
+        tokenType:
+          type: string
+          enum: ["Bearer"]
+          example: "Bearer"
+        expiresIn:
+          type: integer
+          description: Token lifetime in seconds.
+          example: 3600
+        issuedAt:
+          type: string
+          format: date-time
+          description: RFC 3339 timestamp when the token was minted.
+          example: "2026-05-17T12:00:00Z"
+      additionalProperties: false
+
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - checks
+        - uptimeSeconds
+      properties:
+        status:
+          type: string
+          enum: ["healthy", "unhealthy"]
+          example: "healthy"
+        uptimeSeconds:
+          type: integer
+          description: Seconds since service start.
+          example: 86400
+        checks:
+          $ref: "#/components/schemas/HealthChecks"
+      additionalProperties: false
+
+    HealthChecks:
+      type: object
+      required:
+        - jwks
+        - signingKey
+        - database
+      properties:
+        jwks:
+          type: string
+          enum: ["ok", "error"]
+          description: JWKS cache status.
+        signingKey:
+          type: string
+          enum: ["ok", "error"]
+          description: RSA signing key status.
+        database:
+          type: string
+          enum: ["ok", "error"]
+          description: SQLite database connectivity.
+      additionalProperties: false
+
+    ErrorEnvelope:
+      type: object
+      required:
+        - error
+        - message
+        - requestId
+        - timestamp
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code.
+          example: "invalid_signature"
+        message:
+          type: string
+          description: Human-readable error description.
+          example: "JWT signature verification failed"
+        detail:
+          type: string
+          nullable: true
+          description: Additional context for the error (when available).
+          example: "signature did not match any JWKS key"
+        details:
+          type: array
+          items:
+            $ref: "#/components/schemas/ErrorDetail"
+          nullable: true
+          description: Field-level validation errors.
+        requestId:
+          type: string
+          format: uuid
+          description: Unique request identifier for tracing.
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        timestamp:
+          type: string
+          format: date-time
+          description: RFC 3339 timestamp of the error.
+          example: "2026-05-17T12:00:00Z"
+      additionalProperties: false
+
+    ErrorDetail:
+      type: object
+      required:
+        - field
+        - message
+        - code
+      properties:
+        field:
+          type: string
+          description: The request field that caused the error.
+          example: "token"
+        message:
+          type: string
+          description: Human-readable explanation.
+          example: "Token is required"
+        code:
+          type: string
+          description: Machine-readable field error code.
+          example: "missing_token"
+      additionalProperties: false
