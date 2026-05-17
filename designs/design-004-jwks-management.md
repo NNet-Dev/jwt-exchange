@@ -1,7 +1,7 @@
 ---
 app: jwt-exchange
 owner: Marc
-status: Draft
+status: Active
 supersedes: []
 depends_on: [design-001-init.md]
 owns: []
@@ -70,7 +70,7 @@ If the well-known endpoint or JWKS endpoint is unreachable at startup:
 ## In-memory caching
 
 The JWKS is cached in memory as an `Arc<RwLock<Jwks>>` (or equivalent concurrent structure). This allows:
-- Concurrent read access during token validation (lock-free for reads).
+- Concurrent read access during token validation (read lock held briefly).
 - Atomic swap on refresh (write lock briefly held).
 
 ### Cache structure
@@ -79,7 +79,7 @@ The JWKS is cached in memory as an `Arc<RwLock<Jwks>>` (or equivalent concurrent
 struct CachedJwks {
     keys: HashMap<String, JsonWebKey>,  // kid → key
     fetched_at: Instant,
-    raw: serde_json::Value,             // original JSON, for logging/debugging
+    etag: Option<String>,               // ETag for conditional requests
 }
 ```
 
@@ -87,26 +87,21 @@ struct CachedJwks {
 
 ## Periodic refresh
 
-### Configuration
-
-| Env var | Default | Description |
-|---|---|---|
-| `JWKS_REFRESH_INTERVAL_SECONDS` | `3600` | Seconds between JWKS refresh (1 hour) |
-
 ### Mechanism
 
-A background Tokio task runs on the configured interval:
-1. Fetch the JWKS from the `jwks_uri`.
-2. On success, atomically swap the in-memory cache.
-3. On failure, log the error and **keep the existing cache**. A stale cache is better than no cache.
-4. The refresh task runs independently and never blocks request handling.
+A background Tokio task runs on a configured interval:
+1. Fetch the JWKS from the `jwks_uri`, sending `If-None-Match` with the stored ETag if available.
+2. On `200 OK` with new content, atomically swap the in-memory cache and update the ETag.
+3. On `304 Not Modified`, skip the cache update (saves bandwidth and parsing).
+4. On failure, log the error and **keep the existing cache**. A stale cache is better than no cache.
+5. The refresh task runs independently and never blocks request handling.
 
 ### ETag / If-None-Match
 
 If the IdP supports ETag headers on the JWKS endpoint (common for CDN-backed endpoints), use them:
 - Store the ETag from the last successful fetch.
 - Send `If-None-Match` on subsequent fetches.
-- On `304 Not Modified`, skip the cache update (saves bandwidth and parsing).
+- On `304 Not Modified`, skip the cache update.
 
 If the endpoint doesn't support ETag, fall back to unconditional fetch.
 
@@ -122,11 +117,11 @@ The IdP rotates signing keys. A new key may appear in the JWKS at any time. If a
 
 When signature validation fails because the JWT's `kid` is not found in the cached JWKS:
 
-1. **Log** the unknown kid and the validation failure.
+1. **Log** the unknown kid, available cache KIDs, and the JWKS URI (diagnostic logging).
 2. **Force-refresh** the JWKS (fetch from IdP immediately, bypassing the refresh interval).
 3. **Retry** validation with the refreshed JWKS.
 4. If the kid is now found → validation proceeds normally.
-5. If the kid is still not found → return `UNKNOWN_KID` error (401).
+5. If the kid is still not found → return `unknown_kid` error (401).
 
 ### Why this works
 
@@ -135,7 +130,7 @@ The IdP's key rotation is not instantaneous. Old keys remain in the JWKS for a g
 ### Rate limiting the refresh
 
 To prevent abuse (an attacker sending many JWTs with fake kids, triggering refreshes):
-- Cooldown period: `JWKS_REFRESH_COOLDOWN_SECONDS` (default: 60s). If a refresh was triggered within the last 60 seconds, skip the refresh and return the error immediately.
+- Cooldown period: 60 seconds. If a refresh was triggered within the last 60 seconds, skip the refresh and return the error immediately.
 - Max consecutive failures: 5. After 5 consecutive unknown-kid failures within the cooldown window, log a warning and stop refreshing until the cooldown expires.
 
 ---
@@ -159,6 +154,6 @@ To prevent abuse (an attacker sending many JWTs with fake kids, triggering refre
 ## Cross-references
 
 - Init design: `design-001-init.md` — overall architecture
-- HTTP API: `design-002-http-api.md` — error codes (`UNKNOWN_KID`, `INVALID_SIGNATURE`)
+- HTTP API: `design-002-http-api.md` — error codes (`unknown_kid`, `invalid_signature`)
 - Token mapping: `design-003-token-mapping.md` — validation precedes mapping
-- Logging: `design-005-logging.md` — JWKS fetch failures are logged as `IDP_UNAVAILABLE`
+- Logging: `design-005-logging.md` — JWKS fetch failures are logged as `idp_unavailable`

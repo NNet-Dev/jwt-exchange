@@ -13,25 +13,27 @@ owns: [http-api, database]
 
 ## Purpose
 
-JWT Exchange is a token exchange service. It receives an IdP-issued JWT, validates it against the IdP JWKS, extracts the user identity, and mints a new RSA-signed JWT tailored for a downstream JWT virtual proxy. All requests are logged to SQLite with a 60-day auto-purge and a Splunk HEC export stream.
+JWT Exchange is a token exchange service. It receives an IdP-issued JWT, validates it against the IdP JWKS, extracts the user identity, and mints a new RSA-signed JWT tailored for a downstream JWT virtual proxy. All requests are logged to SQLite with a configurable auto-purge and a Splunk HEC export stream.
 
 ---
 
 ## What this project owns
 
-- **Domain:** Token exchange — IdP JWT in, Qlik JWT out
-- **Data:** 
-  - IdP JWKS (fetched at startup, cached with refresh)
-  - RSA signing key pair (private key held, public cert exported as PEM)
-  - Request audit log (SQLite, 60-day retention with auto-purge)
-- **Services:** 
-  - HTTP endpoint that accepts an inbound JWT and returns a Qlik-compatible JWT
+- **Domain:** Token exchange — IdP JWT in, downstream JWT out
+- **Data:**
+  - IdP JWKS (fetched at startup, cached with ETag-aware refresh)
+  - RSA signing key pair (auto-generated or loaded from PEM)
+  - Request audit log (SQLite, configurable retention with auto-purge)
+  - Used JTI tracking (SQLite, for replay protection)
+- **Services:**
+  - HTTP endpoint that accepts an inbound JWT and returns a downstream-compatible JWT
   - HTTP endpoint that returns the public X.509 certificate (PEM)
   - Background task for log auto-purge
-  - Splunk HEC export stream for log forwarding
+  - Background task for JTI expiry cleanup
+  - Streaming Splunk HEC exporter (optional)
 - **External systems:**
   - **IdP issuer** (e.g. `https://<tenant>.okta.com`) — validates incoming tokens via `/.well-known/openid-configuration` → `jwks_uri`
-  - **Qlik Sense Enterprise on Windows** (self-hosted) — JWT virtual proxy trusts the public X.509 cert of our signing key pair
+  - **Downstream service** (e.g. Qlik Sense JWT virtual proxy) — trusts the public X.509 cert of our signing key pair
   - **Splunk HEC** — receives structured log events via HTTP
 
 ---
@@ -48,18 +50,18 @@ Client ──IdP JWT──▶ JWT Exchange ──Downstream JWT──▶ Client 
                     └──▶ IdP well-known (discovery at startup)
                     └──▶ IdP JWKS (key material for validation)
                     └──▶ RSA private key (signing key for new JWT)
-                    └──▶ SQLite (audit log write)
+                    └──▶ SQLite (audit log write, JTI replay check)
                     └──▶ Splunk HEC (log export stream)
-                    └──▶ Auto-purge (background, 60-day retention)
+                    └──▶ Auto-purge (background, configurable retention)
 ```
 
 ### HTTP endpoints
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/exchange` | Accept inbound JWT, validate, mint and return Qlik JWT |
-| `GET` | `/cert` | Return the public X.509 certificate in PEM format |
-| `GET` | `/health` | Health check (startup probe, readiness probe) |
+| `POST` | `/api/v1/exchange` | Accept inbound JWT, validate, mint and return downstream JWT |
+| `GET` | `/api/v1/cert` | Return the public X.509 certificate in PEM format |
+| `GET` | `/api/v1/health` | Health check (startup probe, readiness probe) |
 
 ### Step by step
 
@@ -67,61 +69,71 @@ Client ──IdP JWT──▶ JWT Exchange ──Downstream JWT──▶ Client 
    - Load configuration from environment variables.
    - Fetch `/.well-known/openid-configuration` from the IdP issuer.
    - Extract `jwks_uri` and fetch the JWKS. Cache in memory.
-   - Load the RSA private key from disk (PEM format).
-   - Initialize SQLite database for request logging.
-   - Start Splunk HEC export stream (if configured).
-   - Start background auto-purge task (60-day retention).
+   - Resolve RSA key pair: load existing PEM files if provided, otherwise auto-generate RSA-2048 + X.509 cert in `RSA_KEY_DIR`.
+   - Initialize SQLite database for request logging and JTI tracking.
+   - Start streaming Splunk HEC export (if configured).
+   - Start background auto-purge task (audit log retention) and JTI cleanup task.
 
-2. **Incoming request** (`POST /exchange`)
+2. **Incoming request** (`POST /api/v1/exchange`)
    - Accept an inbound JWT (from `Authorization: Bearer` header or request body).
-   - Log the request to SQLite (timestamp, source IP, inbound subject, validation result).
-   - Forward log event to Splunk HEC (async, non-blocking).
    - Validate signature against the cached JWKS.
    - Verify standard claims: `exp` (not expired), `iss` (matches IdP issuer), `aud` (if configured).
-   - Extract `sub` and any mapped claims (e.g., groups, email, name).
+   - Check replay protection: atomically record the token's `jti` (or SHA-256 hash if no `jti`) in the `used_jti` table. If already recorded, reject with `401 replay_detected`.
+   - Extract `sub` and any mapped claims (e.g. groups, email, name).
+   - Filter requested groups against `GROUPS_WHITELIST`.
 
 3. **Token exchange**
-   - Build a new JWT payload with Qlik-required claims:
+   - Build a new JWT payload with downstream-required claims:
      - `userid` — mapped from IdP `sub` (or a custom claim)
      - `userdirectory` — from env var, if set; excluded from payload if not
      - `name`, `email` — carried from IdP claims if present
-     - `groups` — mapped from IdP groups claim (TBD mapping)
+     - `groups` — filtered against whitelist (omitted if none match)
      - Standard JWT claims: `iss`, `aud` (mandatory), `exp`, `nbf`, `iat`, `jti`
    - Sign with RSA (RS256) using the local private key.
 
 4. **Response**
    - Return the new JWT to the caller.
-   - Caller uses it to authenticate against the Qlik Sense JWT virtual proxy via `Authorization: Bearer <token>`.
+   - Log the exchange attempt to SQLite and Splunk (async, non-blocking).
 
 ### Key design decisions
 
-- **RSA signing** — Qlik Sense JWT virtual proxy only supports RS256, RS384, RS512. RS256 is the standard.
-- **Public cert endpoint** — `GET /cert` returns the PEM-formatted public X.509 certificate for pasting into the QMC virtual proxy's "JWT certificate" field.
-- **No relay/proxy** — the service returns the new token to the caller; the caller is responsible for sending it to Qlik Sense. This keeps the service stateless and avoids session management.
-- **JWKS caching** — JWKS is cached in memory with periodic refresh. If signature validation fails with an unknown `kid`, re-fetch the JWKS and retry once (handles key rotation).
-- **SQLite for logging** — lightweight, file-based, no external database dependency. Auto-purge via background task deleting rows older than 60 days.
-- **Splunk HEC export** — async, non-blocking stream. Logs are written to SQLite first, then forwarded to Splunk. If Splunk is unavailable, logs stay in SQLite and are not lost.
+- **RSA signing** — Downstream JWT virtual proxy only supports RS256, RS384, RS512. RS256 is the standard.
+- **Public cert endpoint** — `GET /api/v1/cert` returns the PEM-formatted public X.509 certificate for pasting into the downstream proxy's certificate field.
+- **No relay/proxy** — the service returns the new token to the caller; the caller is responsible for sending it to the downstream service. This keeps the service stateless and avoids session management.
+- **JWKS caching** — JWKS is cached in memory with ETag-aware periodic refresh. If signature validation fails with an unknown `kid`, re-fetch the JWKS and retry once (handles key rotation). Cooldown prevents abuse.
+- **SQLite for logging** — lightweight, file-based, no external database dependency. Auto-purge via background task.
+- **Replay protection** — atomic `INSERT OR IGNORE` on `used_jti` table. Each token can only be exchanged once. Optional `ALLOW_REPLAY` mode permits the same JTI twice (once with groups, once without) via composite key `(jti, has_groups)`.
+- **Splunk HEC export** — streaming, non-blocking. Logs are written to SQLite first, then streamed to Splunk. If Splunk is unavailable, logs stay in SQLite.
 
 ### Configuration
 
 | Key | Required | Default | Description |
 |---|---|---|---|
-| `INBOUND_ISSUER_URI` | Yes | — | IdP tenant base URL |
-| `RSA_PRIVATE_KEY_PATH` | Yes | — | Path to RSA private key (PEM) |
-| `RSA_PUBLIC_CERT_PATH` | Yes | — | Path to public X.509 cert (PEM) |
-| `QLIK_AUDIENCE` | Yes | — | Value for the `aud` claim (must match QMC config) |
-| `QLIK_USER_DIRECTORY` | No | _(excluded)_ | Qlik user directory name. If unset, excluded from JWT payload. |
-| `TOKEN_TTL_SECONDS` | No | `3600` | TTL for minted Qlik JWT |
+| `INBOUND_ISSUER_URI` | Yes | — | IdP issuer URL (JWKS discovery base) |
+| `INBOUND_AUDIENCE_VALIDATION` | No | `true` | Validate `aud` claim on inbound tokens |
+| `INBOUND_EXPECTED_AUDIENCE` | If validation enabled | — | Expected audience value |
+| `QLIK_AUDIENCE` | Yes | — | Audience for minted downstream JWTs |
+| `QLIK_USER_DIRECTORY` | No | _(excluded)_ | User directory for downstream `sub` claim |
+| `GROUPS_WHITELIST` | No | — | Comma-separated group whitelist |
+| `RSA_PRIVATE_KEY_PATH` | No | — | Path to existing RSA private key (PEM) |
+| `RSA_PUBLIC_CERT_PATH` | No | — | Path to existing X.509 cert (PEM) |
+| `RSA_KEY_DIR` | No | `/app/data/keys` | Directory for auto-generated key pair |
+| `DB_PATH` | No | `/data/jwt-exchange.db` | SQLite audit log path |
+| `LOG_RETENTION_DAYS` | No | `60` | Audit log retention period |
+| `SPLUNK_HEC_URL` | No | _(disabled)_ | Splunk HEC endpoint URL |
+| `SPLUNK_HEC_TOKEN` | No | _(disabled)_ | Splunk HEC authentication token |
+| `SPLUNK_HEC_SKIP_TLS_VERIFY` | No | `false` | Disable TLS verification for Splunk |
+| `ALLOW_REPLAY` | No | `false` | Allow same JTI twice (with/without groups) |
+| `MAX_TOKEN_SIZE` | No | `10240` | Maximum inbound token size (bytes) |
+| `MAX_GROUPS_COUNT` | No | `50` | Maximum groups in a single request |
+| `MAX_GROUP_NAME_LENGTH` | No | `256` | Maximum group name length (chars) |
+| `TOKEN_TTL_SECONDS` | No | `3600` | TTL for minted downstream JWT |
 | `LISTEN_HOST` | No | `0.0.0.0` | Service bind address |
 | `LISTEN_PORT` | No | `8080` | Service listen port |
-| `DB_PATH` | No | `./jwt-exchange.db` | SQLite database path for request logs |
-| `LOG_RETENTION_DAYS` | No | `60` | Days to retain request logs before auto-purge |
-| `SPLUNK_HEC_URL` | No | _(disabled)_ | Splunk HEC endpoint URL (e.g. `https://splunk:8088/services/collector`) |
-| `SPLUNK_HEC_TOKEN` | No | _(disabled)_ | Splunk HEC authentication token |
 
-### Qlik Sense JWT payload shape
+### Downstream JWT payload shape
 
-Per Qlik documentation, the JWT payload must include:
+Per downstream documentation, the JWT payload must include:
 
 ```json
 {
@@ -139,20 +151,13 @@ Per Qlik documentation, the JWT payload must include:
 }
 ```
 
-The `userid` and `userdirectory` claim names are configurable in the QMC virtual proxy settings — they can be different keys if needed, but these are the defaults shown in Qlik's docs.
+The `userid` and `userdirectory` claim names are configurable in the downstream proxy settings.
 
 ### Certificate management
 
 The RSA key pair is **auto-generated at first startup** if no existing key/cert paths are configured. Keys are written to the configured `RSA_KEY_DIR` and persist across restarts (mount as a volume in containerised deployments). Alternatively, pre-existing PEM files can be provided via `RSA_PRIVATE_KEY_PATH` and `RSA_PUBLIC_CERT_PATH` environment variables.
 
-The `GET /cert` endpoint outputs the public cert PEM for QMC configuration.
-
-```bash
-# Manual generation (optional — service auto-generates if keys are absent)
-openssl genrsa -out privatekey.pem 4096
-openssl req -new -x509 -key privatekey.pem -out publickey.cer -days 1825 \
-  -subj "/CN=jwt-exchange/O=jwt-exchange"
-```
+The `GET /api/v1/cert` endpoint outputs the public cert PEM for downstream configuration.
 
 ---
 
@@ -162,15 +167,15 @@ This project is deployment-agnostic. The deployment contract is:
 - Config via environment variables (see table above)
 - RSA key pair mounted as files or provided via secret management
 - SQLite database file persists on disk (ensure volume mount if containerised)
-- External systems connected via HTTPS (IdP OIDC discovery, Qlik Sense proxy, Splunk HEC)
+- External systems connected via HTTPS (IdP OIDC discovery, downstream proxy, Splunk HEC)
 
 ---
 
-## Next
+## Implemented designs
 
-Subsequent design docs will define:
+All subsequent design documents are complete and implemented:
 
-- `design-002-http-api.md` — HTTP endpoint contracts (request shapes, response shapes, error envelope)
-- `design-003-token-mapping.md` — Claim mapping rules (IdP → Qlik), groups mapping, TTL strategy
-- `design-004-jwks-management.md` — JWKS caching, refresh strategy, unknown-kid retry
-- `design-005-logging.md` — SQLite schema, auto-purge, Splunk HEC export stream
+- `design-002-http-api.md` — HTTP endpoint contracts
+- `design-003-token-mapping.md` — Claim mapping rules
+- `design-004-jwks-management.md` — JWKS caching and refresh
+- `design-005-logging.md` — SQLite schema, auto-purge, Splunk export
